@@ -1,0 +1,9 @@
+opencv-python
+Pillow
+reportlab
+deepface
+tensorflow
+tf-keras
+numpy
+pandas
+deepface
