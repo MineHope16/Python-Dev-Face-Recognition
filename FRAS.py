@@ -134,30 +134,100 @@ def add_new_student(root):
         if not os.path.exists(image_folder):
             os.makedirs(image_folder)
 
+        # Show initial message
+        messagebox.showinfo("Photo Capture Process", 
+                           "📸 For better face recognition accuracy, we need to capture 5 photos.\n\n"
+                           "Please ensure:\n"
+                           "• Good lighting on your face\n"
+                           "• Look directly at the camera\n"
+                           "• Remove sunglasses/hat if any\n\n"
+                           "Each photo will be taken one by one with your permission.\n"
+                           "Get ready for Photo 1!")
+
         cap = cv2.VideoCapture(0)  # Use default camera
+        if not cap.isOpened():
+            messagebox.showerror("Camera Error", "Cannot access camera. Please check camera connection.")
+            return
+
         img_count = 0
         max_images = 5
+        photos_captured = []
 
-        while img_count < max_images:
-            ret, frame = cap.read()
-            if not ret:
-                messagebox.showerror("Error", "Failed to capture image.")
-                cap.release()
-                return
+        try:
+            while img_count < max_images:
+                # Show current photo number
+                current_photo = img_count + 1
+                
+                # Create a window for live preview
+                window_title = f"📸 Photo {current_photo}/{max_images} - Press SPACE to Capture or Q to Cancel"
+                
+                captured = False
+                while not captured:
+                    ret, frame = cap.read()
+                    if not ret:
+                        messagebox.showerror("Error", "Failed to capture from camera.")
+                        cap.release()
+                        return
 
-            cv2.imshow(f"Capturing Images ({img_count+1}/{max_images})", frame)
-            cv2.imwrite(os.path.join(image_folder, f"{roll_number}_{img_count}.jpg"), frame)
-            img_count += 1
-            time.sleep(1)
+                    # Add instruction text on the frame
+                    instruction_text = f"Photo {current_photo}/{max_images} - Press SPACE to capture"
+                    cv2.putText(frame, instruction_text, (10, 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    
+                    ready_text = "Position yourself and press SPACE when ready"
+                    cv2.putText(frame, ready_text, (10, 70), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                response = messagebox.askyesno("Stop Capturing", "Do you want to stop capturing images?")
-                if not response:
-                    break
+                    cv2.imshow(window_title, frame)
+                    
+                    key = cv2.waitKey(1) & 0xFF
+                    
+                    # Capture photo on SPACE key
+                    if key == ord(' '):  # Space bar
+                        # Save the image
+                        image_path = os.path.join(image_folder, f"{roll_number}_{img_count}.jpg")
+                        cv2.imwrite(image_path, frame)
+                        photos_captured.append(image_path)
+                        
+                        # Show success message
+                        success_msg = f"✅ Photo {current_photo}/{max_images} captured successfully!"
+                        if current_photo < max_images:
+                            success_msg += f"\n\nGet ready for Photo {current_photo + 1}!"
+                        else:
+                            success_msg += "\n\n🎉 All photos captured! Processing registration..."
+                        
+                        messagebox.showinfo("Photo Captured", success_msg)
+                        captured = True
+                        img_count += 1
+                        
+                    # Cancel on Q key
+                    elif key == ord('q'):
+                        if messagebox.askyesno("Cancel Registration", 
+                                             f"Are you sure you want to cancel registration?\n"
+                                             f"You have captured {img_count} out of {max_images} photos."):
+                            cap.release()
+                            cv2.destroyAllWindows()
+                            # Clean up partially captured images
+                            for photo in photos_captured:
+                                if os.path.exists(photo):
+                                    os.remove(photo)
+                            if os.path.exists(image_folder) and not os.listdir(image_folder):
+                                os.rmdir(image_folder)
+                            messagebox.showinfo("Cancelled", "Student registration was cancelled.")
+                            form_window.destroy()
+                            return
 
-        cap.release()
-        cv2.destroyAllWindows()
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred during photo capture: {str(e)}")
+            cap.release()
+            cv2.destroyAllWindows()
+            return
+        
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
 
+        # If all photos were captured successfully
         if img_count == max_images:
             conn = sqlite3.connect('studentss.db')
             c = conn.cursor()
@@ -165,14 +235,23 @@ def add_new_student(root):
                       (name, roll_number, department, address, image_folder))
             conn.commit()
             conn.close()
-            messagebox.showinfo("Success", "Student information and images added successfully!")
+            
+            messagebox.showinfo("Registration Complete! 🎉", 
+                               f"Congratulations {name}!\n\n"
+                               f"✅ All 5 photos captured successfully\n"
+                               f"✅ Student information saved\n"
+                               f"✅ Roll Number: {roll_number}\n\n"
+                               f"You can now use the Face Recognition feature for attendance.\n"
+                               f"Thank you for your patience! 😊")
         else:
-            messagebox.showinfo("Cancelled", "Student registration was stopped by the user.")
+            messagebox.showinfo("Registration Incomplete", 
+                               f"Registration was not completed.\n"
+                               f"Only {img_count} out of {max_images} photos were captured.")
 
         form_window.destroy()
 
     # Submit button with unique style
-    submit_button = tk.Button(form_window, text="Submit", command=submit_details, **button_style)
+    submit_button = tk.Button(form_window, text="📸 Register & Take Photos", command=submit_details, **button_style)
     submit_button.grid(row=5, column=0, columnspan=2, pady=40)
 
 
@@ -209,10 +288,12 @@ def recognize_face():
     cv2.destroyAllWindows()
 
     try:
+        print(f"🚀 Starting face recognition process...")
         conn = sqlite3.connect('studentss.db')
         c = conn.cursor()
         c.execute("SELECT name, roll_number, image_folder FROM students")
         students = c.fetchall()
+        print(f"👥 Found {len(students)} registered students in database")
 
         recognized = False
         best_match = None
@@ -270,31 +351,65 @@ def recognize_face():
         # Only proceed if we have exactly one strong match
         if match_count == 1 and best_match and best_distance < 0.4:
             name, roll_number = best_match
-            print(f"Strong match found! Student identified as {name} with confidence distance: {best_distance:.4f}")
+            print(f"🎯 STRONG MATCH FOUND! Student identified as {name} with confidence distance: {best_distance:.4f}")
+            print(f"📝 Match count: {match_count}, Roll number: {roll_number}")
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"⏰ Current time: {current_time}")
             
-            # Log attendance
-            c.execute("SELECT id, login_time, logout_time FROM attendance WHERE roll_number = ? AND DATE(login_time) = DATE('now')", (roll_number,))
-            record = c.fetchone()
-            
-            if record:
-                if record[2] is None:  # No logout time
-                    if messagebox.askyesno("Logout", f"{name} ({roll_number}) is already logged in today. Do you want to log out?"):
-                        c.execute("UPDATE attendance SET logout_time = ? WHERE id = ?", (current_time, record[0]))
-                        conn.commit()
-                        messagebox.showinfo("Logout", f"Goodbye {name}! Logout time recorded.")
+            try:
+                # Log attendance
+                print(f"🔍 Checking existing attendance for roll number: {roll_number}")
+                c.execute("SELECT id, login_time, logout_time FROM attendance WHERE roll_number = ? AND DATE(login_time) = DATE('now')", (roll_number,))
+                record = c.fetchone()
+                print(f"📋 Existing record found: {record}")
+                
+                if record:
+                    if record[2] is None:  # No logout time
+                        print(f"⚠️ Student already logged in today, asking for logout")
+                        if messagebox.askyesno("Logout", f"{name} ({roll_number}) is already logged in today. Do you want to log out?"):
+                            print(f"✅ User chose to logout, updating record ID: {record[0]}")
+                            c.execute("UPDATE attendance SET logout_time = ? WHERE id = ?", (current_time, record[0]))
+                            conn.commit()
+                            print(f"💾 Logout record committed to database")
+                            messagebox.showinfo("Logout", f"Goodbye {name}! Logout time recorded.")
+                            return
+                        else:
+                            print(f"❌ User chose not to logout")
+                            return
+                    else:
+                        print(f"ℹ️ Student already completed attendance for today")
+                        messagebox.showinfo("Already Logged", f"{name} has already completed attendance for today.")
                         return
                 else:
-                    messagebox.showinfo("Already Logged", f"{name} has already completed attendance for today.")
+                    print(f"🆕 No existing record, creating new attendance entry")
+                    print(f"📝 Executing INSERT: roll_number={roll_number}, login_time={current_time}")
+                    c.execute("INSERT INTO attendance (roll_number, login_time) VALUES (?, ?)", (roll_number, current_time))
+                    
+                    # Verify the insert worked
+                    print(f"💾 Committing transaction to database...")
+                    conn.commit()
+                    print(f"✅ Transaction committed successfully!")
+                    
+                    # Double-check the record was inserted
+                    c.execute("SELECT * FROM attendance WHERE roll_number = ? AND login_time = ?", (roll_number, current_time))
+                    verify_record = c.fetchone()
+                    print(f"🔍 Verification - Record inserted: {verify_record}")
+                    
+                    messagebox.showinfo("Success", f"Welcome {name}! Attendance marked successfully!")
+                    print(f"🎉 Attendance successfully recorded for {name}")
                     return
-            else:
-                c.execute("INSERT INTO attendance (roll_number, login_time) VALUES (?, ?)", (roll_number, current_time))
-                conn.commit()
-                messagebox.showinfo("Success", f"Welcome {name}! Attendance marked successfully!")
+                    
+            except Exception as db_error:
+                print(f"❌ DATABASE ERROR during attendance recording: {str(db_error)}")
+                print(f"🔧 Error type: {type(db_error).__name__}")
+                messagebox.showerror("Database Error", f"Failed to record attendance: {str(db_error)}")
                 return
         elif match_count > 1:
+            print(f"⚠️ AMBIGUOUS RECOGNITION: {match_count} students matched - rejecting for security")
             messagebox.showwarning("Ambiguous Recognition", "Multiple students matched. Please ensure good lighting and try again.")
         else:
+            print(f"❌ NO RECOGNITION: No students matched the face (match_count={match_count})")
+            print(f"🔍 Best match was: {best_match} with distance: {best_distance:.4f}")
             messagebox.showwarning("Not Recognized", "No matching student found. Please try again or register if you're new.")
             
     except Exception as e:
@@ -369,58 +484,189 @@ def generate_student_info_pdf():
     students = c.fetchall()
     
     # Create a PDF document
-    pdf_file = "student_info_report.pdf"
+    pdf_file = "attendance_report.pdf"
     document = SimpleDocTemplate(pdf_file, pagesize=letter)
+    elements = []
     
-    # Create a list to hold the table data
-    data = [["Name", "Department", "Roll Number", "Attendance Percentage"]]
-    row_styles = []
+    # Add title
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib.units import inch
     
-    total_days = 100  # Assuming we're tracking attendance over 100 days
-    for index, student in enumerate(students, start=1):
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        spaceAfter=30,
+        alignment=1,  # Center alignment
+        textColor=colors.darkblue
+    )
+    
+    # Add title and date
+    title = Paragraph("📊 Face Recognition Attendance System Report", title_style)
+    elements.append(title)
+    
+    date_style = ParagraphStyle(
+        'DateStyle',
+        parent=styles['Normal'],
+        fontSize=12,
+        alignment=1,  # Center alignment
+        spaceAfter=20
+    )
+    
+    from datetime import datetime
+    current_date = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+    date_para = Paragraph(f"Generated on: {current_date}", date_style)
+    elements.append(date_para)
+    elements.append(Spacer(1, 20))
+    
+    # Process each student
+    for student_index, student in enumerate(students):
         name, department, roll_number = student
         
-        # Calculate attendance percentage
-        c.execute("SELECT COUNT(*) FROM attendance WHERE roll_number = ?", (roll_number,))
-        total_attendance = c.fetchone()[0]
-        attendance_percentage = (total_attendance / total_days) * 100 if total_days > 0 else 0
+        # Add student header
+        student_style = ParagraphStyle(
+            'StudentHeader',
+            parent=styles['Heading2'],
+            fontSize=16,
+            spaceAfter=10,
+            textColor=colors.darkgreen
+        )
         
-        # Append the student data to the table
-        data.append([name, department, roll_number, f"{attendance_percentage:.2f}%"])
+        student_header = Paragraph(
+            f"🎓 {name} (Roll: {roll_number}) - {department} Department", 
+            student_style
+        )
+        elements.append(student_header)
         
-        # Add style for rows with attendance < 3%
-        if attendance_percentage < 3:
-            row_styles.append(('BACKGROUND', (0, index), (-1, index), colors.red))
+        # Get all attendance records for this student
+        c.execute("""
+            SELECT login_time, logout_time 
+            FROM attendance 
+            WHERE roll_number = ? 
+            ORDER BY login_time DESC
+        """, (roll_number,))
+        attendance_records = c.fetchall()
+        
+        if attendance_records:
+            # Create table for this student's attendance
+            attendance_data = [["📅 Date", "📆 Day", "🕐 Login Time", "🕐 Logout Time", "⏱️ Duration"]]
+            
+            total_duration_minutes = 0
+            
+            for login_time_str, logout_time_str in attendance_records:
+                # Parse login time
+                login_dt = datetime.strptime(login_time_str, "%Y-%m-%d %H:%M:%S")
+                date_str = login_dt.strftime("%b %d, %Y")
+                day_str = login_dt.strftime("%A")
+                login_display = login_dt.strftime("%I:%M %p")
+                
+                # Parse logout time if available
+                if logout_time_str:
+                    logout_dt = datetime.strptime(logout_time_str, "%Y-%m-%d %H:%M:%S")
+                    logout_display = logout_dt.strftime("%I:%M %p")
+                    
+                    # Calculate duration
+                    duration = logout_dt - login_dt
+                    duration_hours = duration.total_seconds() / 3600
+                    total_duration_minutes += duration.total_seconds() / 60
+                    
+                    if duration_hours < 1:
+                        duration_str = f"{int(duration.total_seconds() / 60)} min"
+                    else:
+                        hours = int(duration_hours)
+                        minutes = int((duration_hours - hours) * 60)
+                        duration_str = f"{hours}h {minutes}m"
+                else:
+                    logout_display = "Not logged out"
+                    duration_str = "N/A"
+                
+                attendance_data.append([
+                    date_str,
+                    day_str,
+                    login_display,
+                    logout_display,
+                    duration_str
+                ])
+            
+            # Create table with attendance data
+            attendance_table = Table(attendance_data, colWidths=[1.5*inch, 1*inch, 1*inch, 1*inch, 1*inch])
+            attendance_table.setStyle(TableStyle([
+                # Header styling
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                
+                # Data styling
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+                
+                # Special styling for incomplete sessions (no logout)
+                ('TEXTCOLOR', (3, 1), (3, -1), colors.red),  # Logout time column
+            ]))
+            
+            elements.append(attendance_table)
+            
+            # Add summary for this student
+            total_days = len(attendance_records)
+            total_hours = total_duration_minutes / 60 if total_duration_minutes > 0 else 0
+            
+            summary_style = ParagraphStyle(
+                'Summary',
+                parent=styles['Normal'],
+                fontSize=10,
+                spaceAfter=20,
+                leftIndent=20
+            )
+            
+            summary_text = f"""
+            📈 <b>Summary:</b> Total Attendance Days: {total_days} | 
+            Total Hours: {total_hours:.1f}h | 
+            Average per Day: {total_hours/total_days:.1f}h
+            """
+            
+            summary_para = Paragraph(summary_text, summary_style)
+            elements.append(summary_para)
+            
         else:
-            row_styles.append(('BACKGROUND', (0, index), (-1, index), colors.green))
-
+            # No attendance records
+            no_data_style = ParagraphStyle(
+                'NoData',
+                parent=styles['Normal'],
+                fontSize=10,
+                spaceAfter=20,
+                leftIndent=20,
+                textColor=colors.red
+            )
+            no_data = Paragraph("❌ No attendance records found for this student.", no_data_style)
+            elements.append(no_data)
+        
+        # Add separator between students (except for the last one)
+        if student_index < len(students) - 1:
+            elements.append(Spacer(1, 30))
+    
     conn.close()
-
-    # Create a table with the data
-    table = Table(data)
-    style = TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-    ])
-
-    # Apply conditional styles
-    for row_style in row_styles:
-        style.add(*row_style)
-
-    table.setStyle(style)
-
+    
     # Build the PDF
-    document.build([table])
+    document.build(elements)
+    
     messagebox.showinfo(
-        "Report Generated",
-        f"Student information report has been successfully generated!\n\n"
-        f"File Name: student_info_report.pdf\n"
-        f"Location: {os.path.abspath(pdf_file)}\n\n"
-        f"You can now view or share the report."
+        "📊 Attendance Report Generated!",
+        f"✅ Detailed attendance report has been successfully generated!\n\n"
+        f"📄 File Name: attendance_report.pdf\n"
+        f"📁 Location: {os.path.abspath(pdf_file)}\n\n"
+        f"📋 Report includes:\n"
+        f"• Date and day for each attendance\n"
+        f"• Complete login/logout times\n"
+        f"• Duration calculations\n"
+        f"• Student-wise summaries\n\n"
+        f"🚀 Opening report now..."
     )
     os.startfile(pdf_file)
     
