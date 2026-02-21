@@ -7,3 +7,4 @@ tf-keras
 numpy
 pandas
 deepface
+python-dotenv
